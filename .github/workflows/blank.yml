@@ -1,79 +1,72 @@
 
-name: Build Miyar APK
+name: Diagnose Miyar Project
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-    paths:
-      - ".github/workflows/build-apk.yml"
-      - "Miyar_GitHub_Starter.zip"
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  inspect:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Extract project ZIP
+      - name: Inspect ZIP contents
         shell: bash
         run: |
           set -e
-          ZIP_FILE="Miyar_GitHub_Starter.zip"
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "::error::ZIP file not found: $ZIP_FILE"
-            echo "Files in repository:"
-            ls -la
+          ZIP="Miyar_GitHub_Starter.zip"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::ZIP file is missing"
+            ls -lah
             exit 1
           fi
+
+          echo "===== ZIP FILE INFORMATION ====="
+          ls -lh "$ZIP"
+          file "$ZIP"
+
+          echo "===== ARCHIVE CONTENTS ====="
+          unzip -l "$ZIP"
 
           mkdir -p extracted
-          unzip -o "$ZIP_FILE" -d extracted
+          unzip -o "$ZIP" -d extracted
 
-          echo "Extracted files:"
-          find extracted -maxdepth 3 -type f | head -100
+          echo "===== EXTRACTED FILE TREE ====="
+          find extracted -maxdepth 5 -type f | sort
 
-      - name: Find Android project
-        shell: bash
-        run: |
-          set -e
+          echo "===== ANDROID BUILD FILES ====="
+          find extracted -type f \( \
+            -name gradlew -o \
+            -name settings.gradle -o \
+            -name settings.gradle.kts -o \
+            -name build.gradle -o \
+            -name build.gradle.kts -o \
+            -name AndroidManifest.xml \
+          \) -print
 
-          WRAPPER="$(find extracted -type f \
-            -name gradlew -print -quit)"
+          echo "===== PROJECT DIAGNOSIS ====="
 
-          if [ -z "$WRAPPER" ]; then
-            echo "::error::No Gradle wrapper (gradlew) found in ZIP."
-            echo "The project structure must be checked."
-            exit 1
+          if find extracted -type f \
+            -name gradlew -print -quit | grep -q .; then
+            echo "RESULT: Gradle wrapper exists."
+          elif find extracted -type f \( \
+            -name settings.gradle \
+            -o -name settings.gradle.kts \
+            -o -name build.gradle \
+            -o -name build.gradle.kts \
+          \) -print -quit | grep -q .; then
+            echo "RESULT: Gradle files exist, but wrapper is missing."
+          else
+            echo "::warning::No Gradle build files found."
+            echo "The ZIP may not contain a complete Android project."
           fi
-
-          PROJECT_DIR="$(dirname "$WRAPPER")"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          chmod +x "$WRAPPER"
-
-      - name: Build debug APK
-        shell: bash
-        run: |
-          cd "$PROJECT_DIR"
-          ./gradlew --no-daemon assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Miyar-debug-APK
-          path: extracted/**/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 14
