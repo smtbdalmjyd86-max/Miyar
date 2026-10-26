@@ -1,5 +1,5 @@
 
-name: Diagnose Miyar Project
+name: Build Miyar APK
 
 on:
   workflow_dispatch:
@@ -11,62 +11,41 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Inspect ZIP contents
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Extract Android project
         shell: bash
         run: |
           set -e
+          unzip -o Miyar_GitHub_Starter.zip -d project
+          test -f project/settings.gradle.kts
+          test -f project/app/build.gradle.kts
+          test -f project/app/src/main/AndroidManifest.xml
 
-          ZIP="Miyar_GitHub_Starter.zip"
+      - name: Build debug APK
+        working-directory: project
+        run: gradle --no-daemon assembleDebug
 
-          if [ ! -f "$ZIP" ]; then
-            echo "::error::ZIP file is missing"
-            ls -lah
-            exit 1
-          fi
-
-          echo "===== ZIP FILE INFORMATION ====="
-          ls -lh "$ZIP"
-          file "$ZIP"
-
-          echo "===== ARCHIVE CONTENTS ====="
-          unzip -l "$ZIP"
-
-          mkdir -p extracted
-          unzip -o "$ZIP" -d extracted
-
-          echo "===== EXTRACTED FILE TREE ====="
-          find extracted -maxdepth 5 -type f | sort
-
-          echo "===== ANDROID BUILD FILES ====="
-          find extracted -type f \( \
-            -name gradlew -o \
-            -name settings.gradle -o \
-            -name settings.gradle.kts -o \
-            -name build.gradle -o \
-            -name build.gradle.kts -o \
-            -name AndroidManifest.xml \
-          \) -print
-
-          echo "===== PROJECT DIAGNOSIS ====="
-
-          if find extracted -type f \
-            -name gradlew -print -quit | grep -q .; then
-            echo "RESULT: Gradle wrapper exists."
-          elif find extracted -type f \( \
-            -name settings.gradle \
-            -o -name settings.gradle.kts \
-            -o -name build.gradle \
-            -o -name build.gradle.kts \
-          \) -print -quit | grep -q .; then
-            echo "RESULT: Gradle files exist, but wrapper is missing."
-          else
-            echo "::warning::No Gradle build files found."
-            echo "The ZIP may not contain a complete Android project."
-          fi
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Miyar-debug-APK
+          path: project/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
