@@ -38,38 +38,21 @@ jobs:
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
 
-      - name: Fix Java target compatibility
+      - name: Force Java 17 compatibility
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("project/app/build.gradle.kts")
-          s = p.read_text()
-
-          old = s
-          s = s.replace(
-              "JavaVersion.VERSION_1_8",
-              "JavaVersion.VERSION_17"
-          )
-          s = s.replace(
-              'jvmTarget = "1.8"',
-              'jvmTarget = "17"'
-          )
-
-          if s == old:
-              raise SystemExit(
-                  "Java target setting not found; inspect build.gradle.kts"
-              )
-
-          p.write_text(s)
-          print("Updated Java compatibility settings:")
-          print(p.read_text())
-          PY
+          cat > /tmp/force-java17.gradle <<'GRADLE'
+          allprojects {
+              tasks.withType(org.gradle.api.tasks.compile.JavaCompile).configureEach {
+                  sourceCompatibility = '17'
+                  targetCompatibility = '17'
+              }
+          }
+          GRADLE
 
       - name: Build debug APK
         working-directory: project
-        run: gradle --no-daemon assembleDebug
+        run: gradle --init-script /tmp/force-java17.gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
