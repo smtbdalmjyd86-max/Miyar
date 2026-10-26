@@ -38,6 +38,35 @@ jobs:
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
 
+      - name: Fix Java target compatibility
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("project/app/build.gradle.kts")
+          s = p.read_text()
+
+          old = s
+          s = s.replace(
+              "JavaVersion.VERSION_1_8",
+              "JavaVersion.VERSION_17"
+          )
+          s = s.replace(
+              'jvmTarget = "1.8"',
+              'jvmTarget = "17"'
+          )
+
+          if s == old:
+              raise SystemExit(
+                  "Java target setting not found; inspect build.gradle.kts"
+              )
+
+          p.write_text(s)
+          print("Updated Java compatibility settings:")
+          print(p.read_text())
+          PY
+
       - name: Build debug APK
         working-directory: project
         run: gradle --no-daemon assembleDebug
