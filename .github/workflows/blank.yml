@@ -38,7 +38,6 @@ jobs:
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
 
-      
       - name: Set Android Java target to 17
         shell: bash
         run: |
@@ -55,20 +54,9 @@ jobs:
           echo "Updated Android Java target:"
           tail -n 12 project/app/build.gradle.kts
 
-        shell: bash
-        run: |
-          cat > /tmp/force-java17.gradle <<'GRADLE'
-          allprojects {
-              tasks.withType(org.gradle.api.tasks.compile.JavaCompile).configureEach {
-                  sourceCompatibility = '17'
-                  targetCompatibility = '17'
-              }
-          }
-          GRADLE
-
       - name: Build debug APK
         working-directory: project
-        run: gradle --init-script /tmp/force-java17.gradle --no-daemon assembleDebug
+        run: gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
