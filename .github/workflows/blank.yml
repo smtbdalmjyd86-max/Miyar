@@ -38,7 +38,23 @@ jobs:
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
 
-      - name: Force Java 17 compatibility
+      
+      - name: Set Android Java target to 17
+        shell: bash
+        run: |
+          cat >> project/app/build.gradle.kts <<'GRADLE'
+
+          android {
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+          GRADLE
+
+          echo "Updated Android Java target:"
+          tail -n 12 project/app/build.gradle.kts
+
         shell: bash
         run: |
           cat > /tmp/force-java17.gradle <<'GRADLE'
