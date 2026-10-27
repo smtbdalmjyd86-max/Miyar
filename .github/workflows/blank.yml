@@ -38,6 +38,61 @@ jobs:
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
 
+      - name: Apply Miyar menu and icon updates
+        shell: bash
+        run: |
+          set -e
+
+          test -f Miyar-source-files-menu-icon.zip
+          mkdir -p updates
+
+          unzip -o Miyar-source-files-menu-icon.zip -d updates
+
+          test -f updates/MainActivity.kt
+          test -f updates/data/Models.kt
+          test -f updates/data/MiyarDatabase.kt
+
+          cp updates/MainActivity.kt \
+            project/app/src/main/java/com/miyar/app/MainActivity.kt
+
+          cp updates/data/Models.kt \
+            project/app/src/main/java/com/miyar/app/data/Models.kt
+
+          cp updates/data/MiyarDatabase.kt \
+            project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
+
+          cp -R updates/android-res/. project/app/src/main/res/
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("project/app/src/main/AndroidManifest.xml")
+          content = path.read_text(encoding="utf-8")
+
+          match = re.search(r"<application\b[^>]*>", content, re.S)
+          if not match:
+              raise SystemExit("ERROR: application tag not found")
+
+          tag = match.group(0)
+
+          if not re.search(r'\bandroid:icon\s*=', tag):
+              tag = tag[:-1] + ' android:icon="@mipmap/ic_launcher">'
+
+          if not re.search(r'\bandroid:roundIcon\s*=', tag):
+              tag = tag[:-1] + ' android:roundIcon="@mipmap/ic_launcher_round">'
+
+          content = content[:match.start()] + tag + content[match.end():]
+          path.write_text(content, encoding="utf-8")
+
+          print("Miyar launcher icons configured.")
+          PY
+
+          test -f project/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          test -f project/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+
+          echo "Miyar updates applied successfully."
+
       - name: Set Android Java target to 17
         shell: bash
         run: |
@@ -50,9 +105,6 @@ jobs:
               }
           }
           GRADLE
-
-          echo "Updated Android Java target:"
-          tail -n 12 project/app/build.gradle.kts
 
       - name: Upload Kotlin source for inspection
         uses: actions/upload-artifact@v4
