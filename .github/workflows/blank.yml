@@ -1,6 +1,6 @@
 name: Build Miyar APK
 
-on:
+'on':
 workflow_dispatch:
 push:
 branches:
@@ -65,7 +65,6 @@ steps:
 
       PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
       echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
       echo "Android project: $PROJECT_DIR"
 
   - name: Apply source update
@@ -85,7 +84,6 @@ steps:
       find updates -type f
 
       cp -a updates/. "$PROJECT_DIR/"
-
       echo "Source update copied."
 
   - name: Verify project files
