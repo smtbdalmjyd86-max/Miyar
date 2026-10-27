@@ -1,78 +1,34 @@
 
-name: Build Miyar APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Extract Android project
-        shell: bash
-        run: |
-          set -e
-          unzip -o Miyar_GitHub_Starter.zip -d project
-          test -f project/settings.gradle.kts
-          test -f project/app/build.gradle.kts
-          test -f project/app/src/main/AndroidManifest.xml
-
       - name: Apply Miyar menu and icon updates
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
-          test -f Miyar-source-files-menu-icon.zip
+          test -s Miyar-source-files-menu-icon.zip
+          rm -rf updates
           mkdir -p updates
-
           unzip -o Miyar-source-files-menu-icon.zip -d updates
 
-          test -f updates/MainActivity.kt
-          test -f updates/data/Models.kt
-          test -f updates/data/MiyarDatabase.kt
+          test -s updates/MainActivity.kt
+          test -s updates/data/Models.kt
+          test -s updates/data/MiyarDatabase.kt
+          test -d updates/android-res
 
-          cp updates/MainActivity.kt \
-            project/app/src/main/java/com/miyar/app/MainActivity.kt
-
-          cp updates/data/Models.kt \
-            project/app/src/main/java/com/miyar/app/data/Models.kt
-
-          cp updates/data/MiyarDatabase.kt \
-            project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
-
+          cp updates/MainActivity.kt project/app/src/main/java/com/miyar/app/MainActivity.kt
+          cp updates/data/Models.kt project/app/src/main/java/com/miyar/app/data/Models.kt
+          cp updates/data/MiyarDatabase.kt project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
           cp -R updates/android-res/. project/app/src/main/res/
 
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          path = Path("project/app/src/main/AndroidManifest.xml")
-          content = path.read_text(encoding="utf-8")
+          manifest = Path("project/app/src/main/AndroidManifest.xml")
+          content = manifest.read_text(encoding="utf-8")
 
-          match = re.search(r"<application\b[^>]*>", content, re.S)
+          match = re.search(r'<application\b[^>]*>', content, re.S)
           if not match:
-              raise SystemExit("ERROR: application tag not found")
+              raise SystemExit("ERROR: application tag not found in AndroidManifest.xml")
 
           tag = match.group(0)
 
@@ -83,48 +39,15 @@ jobs:
               tag = tag[:-1] + ' android:roundIcon="@mipmap/ic_launcher_round">'
 
           content = content[:match.start()] + tag + content[match.end():]
-          path.write_text(content, encoding="utf-8")
+          manifest.write_text(content, encoding="utf-8")
 
-          print("Miyar launcher icons configured.")
+          print("Manifest updated successfully.")
           PY
 
-          test -f project/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-          test -f project/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          echo "Launcher resources found:"
+          find project/app/src/main/res -type f \( -name 'ic_launcher.xml' -o -name 'ic_launcher_round.xml' \) -print
+
+          test -s project/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          test -s project/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
           echo "Miyar updates applied successfully."
-
-      - name: Set Android Java target to 17
-        shell: bash
-        run: |
-          cat >> project/app/build.gradle.kts <<'GRADLE'
-
-          android {
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-          }
-          GRADLE
-
-      - name: Upload Kotlin source for inspection
-        uses: actions/upload-artifact@v4
-        with:
-          name: Miyar-source-files
-          path: |
-            project/app/src/main/java/com/miyar/app/MainActivity.kt
-            project/app/src/main/java/com/miyar/app/data/Models.kt
-            project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Build debug APK
-        working-directory: project
-        run: gradle --no-daemon assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Miyar-debug-APK
-          path: project/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 14
