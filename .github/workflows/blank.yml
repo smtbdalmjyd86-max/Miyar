@@ -19,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. التأكد من وجود حزمة التحديث الجديدة
+      # 2. التأكد من وجود حزمة التحديث
       - name: Check new update archive
         shell: bash
         run: |
@@ -43,13 +43,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. إعداد Android SDK بالإصدار المصحح
+      # 4. إعداد Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
 
-      # 5. تثبيت منصة Android وأدوات البناء المطلوبة
+      # 5. تثبيت منصة Android وأدوات البناء
       - name: Install Android SDK packages
         shell: bash
         run: |
@@ -65,7 +65,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      # 7. فك ضغط حزمة التحديث الجديدة
+      # 7. فك ضغط ملفات مِعيار
       - name: Extract new Miyar source
         shell: bash
         run: |
@@ -107,7 +107,8 @@ jobs:
             "$PROJECT_DIR/app/build.gradle" \
             "$PROJECT_DIR/app/build.gradle.kts" 2>/dev/null || true
 
-      - name: Show Kotlin error context
+      # 8. إصلاح خطأي Kotlin المعروفين
+      - name: Fix Kotlin compilation errors
         shell: bash
         run: |
           set -euo pipefail
@@ -115,13 +116,66 @@ jobs:
           FILE="$(find "$MIYAR_PROJECT_DIR/app/src/main" \
             -name MainActivity.kt -print -quit)"
 
-          echo "===== Lines 242-258 ====="
-          nl -ba "$FILE" | sed -n '242,258p'
+          if [ -z "$FILE" ]; then
+            echo "::error::MainActivity.kt not found."
+            exit 1
+          fi
 
-          echo "===== Lines 725-745 ====="
-          nl -ba "$FILE" | sed -n '725,745p'
+          python3 - "$FILE" <<'PY'
+          import pathlib
+          import sys
 
-      # 8. بناء نسخة Debug من مِعيار
+          path = pathlib.Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+
+          # إصلاح واجهة Compose التجريبية
+          annotation = (
+              "@file:OptIn("
+              "androidx.compose.foundation.ExperimentalFoundationApi::class)"
+          )
+
+          if annotation not in source:
+              if "package " not in source:
+                  raise SystemExit(
+                      "لم يتم العثور على package في MainActivity.kt"
+                  )
+
+              source = source.replace(
+                  "package ",
+                  annotation + "\npackage ",
+                  1
+              )
+
+          # إصلاح قيمة Long? دون استبدالها بصفر
+          old = (
+              "onSave(if (title.isBlank() && isLabor) "
+              "workType else title, parsed, details)"
+          )
+
+          new = (
+              "onSave(if (title.isBlank() && isLabor) "
+              "workType else title, requireNotNull(parsed), details)"
+          )
+
+          count = source.count(old)
+
+          if count != 1:
+              raise SystemExit(
+                  f"توقف آمن: عدد مواضع السطر المتوقع هو {count} وليس 1."
+              )
+
+          source = source.replace(old, new, 1)
+
+          path.write_text(source, encoding="utf-8")
+
+          print("تم إصلاح خطأي Kotlin بنجاح.")
+          print("تم الحفاظ على شرط التحقق من قيمة العملية.")
+          PY
+
+          echo "===== Verify applied fixes ====="
+          grep -n -E 'OptIn|requireNotNull\(parsed\)' "$FILE"
+
+      # 9. بناء تطبيق مِعيار
       - name: Build Miyar debug APK
         shell: bash
         run: |
@@ -132,7 +186,7 @@ jobs:
             --no-daemon \
             assembleDebug
 
-      # 9. التحقق من ملف APK الناتج
+      # 10. التحقق من ملف APK
       - name: Verify generated APK
         shell: bash
         run: |
@@ -158,7 +212,7 @@ jobs:
           echo "APK generated successfully:"
           ls -lh "$GITHUB_WORKSPACE/release/Miyar-0.2.0-debug.apk"
 
-      # 10. رفع APK للتنزيل
+      # 11. رفع ملف APK للتنزيل
       - name: Upload Miyar APK
         uses: actions/upload-artifact@v4
         with:
