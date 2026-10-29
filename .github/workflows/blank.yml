@@ -107,6 +107,20 @@ jobs:
             "$PROJECT_DIR/app/build.gradle" \
             "$PROJECT_DIR/app/build.gradle.kts" 2>/dev/null || true
 
+      - name: Show Kotlin error context
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FILE="$(find "$MIYAR_PROJECT_DIR/app/src/main" \
+            -name MainActivity.kt -print -quit)"
+
+          echo "===== Lines 242-258 ====="
+          nl -ba "$FILE" | sed -n '242,258p'
+
+          echo "===== Lines 725-745 ====="
+          nl -ba "$FILE" | sed -n '725,745p'
+
       # 8. بناء نسخة Debug من مِعيار
       - name: Build Miyar debug APK
         shell: bash
