@@ -1,3 +1,4 @@
+
 name: Build Miyar APK
 
 'on':
@@ -18,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. التأكد من وجود حزمة التحديث الجديدة فقط
+      # 2. التأكد من وجود حزمة التحديث الجديدة
       - name: Check new update archive
         shell: bash
         run: |
@@ -28,55 +29,62 @@ jobs:
 
           if [ ! -f "$ARCHIVE" ]; then
             echo "::error::Update archive not found: $ARCHIVE"
-            echo "Upload the new ZIP to the repository root and commit it."
+            echo "Upload the ZIP to the repository root and commit it."
             exit 1
           fi
 
-          echo "New update archive found:"
+          echo "Update archive found:"
           ls -lh "$ARCHIVE"
 
-      # 3. إعداد Java
+      # 3. إعداد Java 17
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # 4. إعداد Android SDK
+      # 4. إعداد Android SDK بالإصدار المصحح
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
+      # 5. تثبيت منصة Android وأدوات البناء المطلوبة
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      # 5. إعداد Gradle
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      # 6. إعداد Gradle
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      # 6. فك ضغط حزمة التحديث الجديدة
+      # 7. فك ضغط حزمة التحديث الجديدة
       - name: Extract new Miyar source
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p "$RUNNER_TEMP/miyar-source"
+          ARCHIVE="$GITHUB_WORKSPACE/Miyar-Update-0.2.0.zip"
+          SOURCE_DIR="$RUNNER_TEMP/miyar-source"
 
-          unzip -q Miyar-Update-0.2.0.zip \
-            -d "$RUNNER_TEMP/miyar-source"
+          mkdir -p "$SOURCE_DIR"
+          unzip -q "$ARCHIVE" -d "$SOURCE_DIR"
 
-          SETTINGS_FILE="$(find "$RUNNER_TEMP/miyar-source" \
+          SETTINGS_FILE="$(find "$SOURCE_DIR" \
             -type f \
             \( -name settings.gradle -o -name settings.gradle.kts \) \
             -print -quit)"
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "::error::Gradle settings file not found in new archive."
-            find "$RUNNER_TEMP/miyar-source" -maxdepth 5 -type f
+            echo "::error::Gradle settings file not found in the archive."
+            find "$SOURCE_DIR" -maxdepth 5 -type f
             exit 1
           fi
 
@@ -85,12 +93,13 @@ jobs:
           if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && \
              [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
             echo "::error::App Gradle file not found."
+            find "$PROJECT_DIR" -maxdepth 4 -type f
             exit 1
           fi
 
           echo "MIYAR_PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Using the NEW source project:"
+          echo "Using the new Miyar source:"
           echo "$PROJECT_DIR"
 
           echo "Application version:"
@@ -98,7 +107,7 @@ jobs:
             "$PROJECT_DIR/app/build.gradle" \
             "$PROJECT_DIR/app/build.gradle.kts" 2>/dev/null || true
 
-      # 7. بناء APK من ملفات التحديث الجديدة
+      # 8. بناء نسخة Debug من مِعيار
       - name: Build Miyar debug APK
         shell: bash
         run: |
@@ -109,7 +118,7 @@ jobs:
             --no-daemon \
             assembleDebug
 
-      # 8. التحقق من ملف APK الناتج
+      # 9. التحقق من ملف APK الناتج
       - name: Verify generated APK
         shell: bash
         run: |
@@ -119,19 +128,23 @@ jobs:
 
           if [ ! -f "$APK" ]; then
             echo "::error::The expected APK was not generated."
+
             find "$MIYAR_PROJECT_DIR" \
               -path '*/build/outputs/apk/*' \
               -type f || true
+
             exit 1
           fi
 
-          mkdir -p release
-          cp "$APK" release/Miyar-0.2.0-debug.apk
+          mkdir -p "$GITHUB_WORKSPACE/release"
+
+          cp "$APK" \
+            "$GITHUB_WORKSPACE/release/Miyar-0.2.0-debug.apk"
 
           echo "APK generated successfully:"
-          ls -lh release/Miyar-0.2.0-debug.apk
+          ls -lh "$GITHUB_WORKSPACE/release/Miyar-0.2.0-debug.apk"
 
-      # 9. إتاحة APK للتنزيل
+      # 10. رفع APK للتنزيل
       - name: Upload Miyar APK
         uses: actions/upload-artifact@v4
         with:
