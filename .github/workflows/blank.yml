@@ -1,11 +1,13 @@
-
-name: Build Miyar APK
+name: Build Miyar 0.4.0 APK
 
 'on':
   workflow_dispatch:
   push:
     branches:
       - main
+    paths:
+      - 'Miyar-Update-0.4.0-Complete.zip'
+      - '.github/workflows/blank.yml'
 
 permissions:
   contents: read
@@ -13,210 +15,102 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      # 1. جلب ملفات المستودع
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. التأكد من وجود حزمة التحديث
-      - name: Check new update archive
+      - name: Check update archive
         shell: bash
         run: |
           set -euo pipefail
-
-          ARCHIVE="Miyar-Update-0.2.0.zip"
-
-          if [ ! -f "$ARCHIVE" ]; then
+          ARCHIVE="Miyar-Update-0.4.0-Complete.zip"
+          if [ ! -s "$ARCHIVE" ]; then
             echo "::error::Update archive not found: $ARCHIVE"
-            echo "Upload the ZIP to the repository root and commit it."
             exit 1
           fi
-
-          echo "Update archive found:"
+          unzip -tq "$ARCHIVE"
           ls -lh "$ARCHIVE"
 
-      # 3. إعداد Java 17
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # 4. إعداد Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
 
-      # 5. تثبيت منصة Android وأدوات البناء
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
 
-          sdkmanager --install \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      # 6. إعداد Gradle
-      - name: Set up Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      # 7. فك ضغط ملفات مِعيار
-      - name: Extract new Miyar source
+      - name: Extract Miyar source
         shell: bash
         run: |
           set -euo pipefail
-
-          ARCHIVE="$GITHUB_WORKSPACE/Miyar-Update-0.2.0.zip"
           SOURCE_DIR="$RUNNER_TEMP/miyar-source"
-
           mkdir -p "$SOURCE_DIR"
-          unzip -q "$ARCHIVE" -d "$SOURCE_DIR"
-
-          SETTINGS_FILE="$(find "$SOURCE_DIR" \
-            -type f \
-            \( -name settings.gradle -o -name settings.gradle.kts \) \
-            -print -quit)"
-
+          unzip -q "$GITHUB_WORKSPACE/Miyar-Update-0.4.0-Complete.zip" -d "$SOURCE_DIR"
+          SETTINGS_FILE="$(find "$SOURCE_DIR" -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
           if [ -z "$SETTINGS_FILE" ]; then
             echo "::error::Gradle settings file not found in the archive."
             find "$SOURCE_DIR" -maxdepth 5 -type f
             exit 1
           fi
-
           PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
-
-          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && \
-             [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
             echo "::error::App Gradle file not found."
-            find "$PROJECT_DIR" -maxdepth 4 -type f
             exit 1
           fi
-
           echo "MIYAR_PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Building source at: $PROJECT_DIR"
 
-          echo "Using the new Miyar source:"
-          echo "$PROJECT_DIR"
-
-          echo "Application version:"
-          grep -n -E 'versionCode|versionName' \
-            "$PROJECT_DIR/app/build.gradle" \
-            "$PROJECT_DIR/app/build.gradle.kts" 2>/dev/null || true
-
-      # 8. إصلاح خطأي Kotlin المعروفين
-      - name: Fix Kotlin compilation errors
+      - name: Verify source files and database migration
         shell: bash
         run: |
           set -euo pipefail
+          test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/MainActivity.kt"
+          test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/FinanceScreens.kt"
+          test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/FinanceModels.kt"
+          test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
+          grep -q 'version = 2' "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
+          grep -q 'MIGRATION_1_2' "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
 
-          FILE="$(find "$MIYAR_PROJECT_DIR/app/src/main" \
-            -name MainActivity.kt -print -quit)"
-
-          if [ -z "$FILE" ]; then
-            echo "::error::MainActivity.kt not found."
-            exit 1
-          fi
-
-          python3 - "$FILE" <<'PY'
-          import pathlib
-          import sys
-
-          path = pathlib.Path(sys.argv[1])
-          source = path.read_text(encoding="utf-8")
-
-          # إصلاح واجهة Compose التجريبية
-          annotation = (
-              "@file:OptIn("
-              "androidx.compose.foundation.ExperimentalFoundationApi::class)"
-          )
-
-          if annotation not in source:
-              if "package " not in source:
-                  raise SystemExit(
-                      "لم يتم العثور على package في MainActivity.kt"
-                  )
-
-              source = source.replace(
-                  "package ",
-                  annotation + "\npackage ",
-                  1
-              )
-
-          # إصلاح قيمة Long? دون استبدالها بصفر
-          old = (
-              "onSave(if (title.isBlank() && isLabor) "
-              "workType else title, parsed, details)"
-          )
-
-          new = (
-              "onSave(if (title.isBlank() && isLabor) "
-              "workType else title, requireNotNull(parsed), details)"
-          )
-
-          count = source.count(old)
-
-          if count != 1:
-              raise SystemExit(
-                  f"توقف آمن: عدد مواضع السطر المتوقع هو {count} وليس 1."
-              )
-
-          source = source.replace(old, new, 1)
-
-          path.write_text(source, encoding="utf-8")
-
-          print("تم إصلاح خطأي Kotlin بنجاح.")
-          print("تم الحفاظ على شرط التحقق من قيمة العملية.")
-          PY
-
-          echo "===== Verify applied fixes ====="
-          grep -n -E 'OptIn|requireNotNull\(parsed\)' "$FILE"
-
-      # 9. بناء تطبيق مِعيار
-      - name: Build Miyar debug APK
+      - name: Run unit tests and build APK
         shell: bash
         run: |
           set -euo pipefail
+          gradle -p "$MIYAR_PROJECT_DIR" --no-daemon testDebugUnitTest assembleDebug
 
-          gradle \
-            -p "$MIYAR_PROJECT_DIR" \
-            --no-daemon \
-            assembleDebug
-
-      # 10. التحقق من ملف APK
-      - name: Verify generated APK
+      - name: Verify APK and checksum
         shell: bash
         run: |
           set -euo pipefail
-
           APK="$MIYAR_PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "::error::The expected APK was not generated."
-
-            find "$MIYAR_PROJECT_DIR" \
-              -path '*/build/outputs/apk/*' \
-              -type f || true
-
+          if [ ! -s "$APK" ]; then
+            echo "::error::Expected APK was not generated."
+            find "$MIYAR_PROJECT_DIR" -path '*/build/outputs/apk/*' -type f || true
             exit 1
           fi
-
+          unzip -tq "$APK"
           mkdir -p "$GITHUB_WORKSPACE/release"
+          cp "$APK" "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk"
+          sha256sum "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk" | tee "$GITHUB_WORKSPACE/release/SHA256SUMS.txt"
+          ls -lh "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk"
 
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/release/Miyar-0.2.0-debug.apk"
-
-          echo "APK generated successfully:"
-          ls -lh "$GITHUB_WORKSPACE/release/Miyar-0.2.0-debug.apk"
-
-      # 11. رفع ملف APK للتنزيل
       - name: Upload Miyar APK
         uses: actions/upload-artifact@v4
         with:
-          name: Miyar-0.2.0-APK
-          path: release/Miyar-0.2.0-debug.apk
+          name: Miyar-0.4.0-APK
+          path: release/*
           if-no-files-found: error
           retention-days: 14
