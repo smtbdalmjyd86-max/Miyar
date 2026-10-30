@@ -15,6 +15,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,10 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           ARCHIVE="Miyar-Update-0.4.0-Complete.zip"
-          if [ ! -s "$ARCHIVE" ]; then
-            echo "::error::Update archive not found: $ARCHIVE"
-            exit 1
-          fi
+          test -s "$ARCHIVE"
           unzip -tq "$ARCHIVE"
           ls -lh "$ARCHIVE"
 
@@ -59,29 +57,70 @@ jobs:
           set -euo pipefail
           SOURCE_DIR="$RUNNER_TEMP/miyar-source"
           mkdir -p "$SOURCE_DIR"
+
           unzip -q "$GITHUB_WORKSPACE/Miyar-Update-0.4.0-Complete.zip" -d "$SOURCE_DIR"
+
           SETTINGS_FILE="$(find "$SOURCE_DIR" -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
+
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "::error::Gradle settings file not found in the archive."
-            find "$SOURCE_DIR" -maxdepth 5 -type f
+            echo "::error::Gradle settings file not found"
             exit 1
           fi
+
           PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+
           if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "::error::App Gradle file not found."
+            echo "::error::App Gradle file not found"
             exit 1
           fi
+
           echo "MIYAR_PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Building source at: $PROJECT_DIR"
+
+      - name: Fix Material 3 experimental API
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FILE="$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/FinanceScreens.kt"
+
+          if [ ! -f "$FILE" ]; then
+            echo "::error::FinanceScreens.kt not found"
+            exit 1
+          fi
+
+          python3 - "$FILE" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+
+          annotation = """@file:OptIn(
+              androidx.compose.material3.ExperimentalMaterial3Api::class
+          )
+          """
+
+          if "ExperimentalMaterial3Api" not in source:
+              if not source.startswith("package "):
+                  raise SystemExit("Unexpected Kotlin file structure")
+
+              source = annotation + "\n" + source
+
+          path.write_text(source, encoding="utf-8")
+          print("Material 3 experimental API fix applied.")
+          PY
 
       - name: Verify source files and database migration
         shell: bash
         run: |
           set -euo pipefail
+
           test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/MainActivity.kt"
           test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/FinanceScreens.kt"
           test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/FinanceModels.kt"
           test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
+
+          grep -q 'ExperimentalMaterial3Api' "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/FinanceScreens.kt"
           grep -q 'version = 2' "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
           grep -q 'MIGRATION_1_2' "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
 
@@ -95,16 +134,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           APK="$MIYAR_PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
           if [ ! -s "$APK" ]; then
-            echo "::error::Expected APK was not generated."
+            echo "::error::APK was not generated"
             find "$MIYAR_PROJECT_DIR" -path '*/build/outputs/apk/*' -type f || true
             exit 1
           fi
+
           unzip -tq "$APK"
+
           mkdir -p "$GITHUB_WORKSPACE/release"
+
           cp "$APK" "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk"
-          sha256sum "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk" | tee "$GITHUB_WORKSPACE/release/SHA256SUMS.txt"
+
+          sha256sum "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk" \
+            | tee "$GITHUB_WORKSPACE/release/SHA256SUMS.txt"
+
           ls -lh "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk"
 
       - name: Upload Miyar APK
