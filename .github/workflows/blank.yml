@@ -1,13 +1,9 @@
-name: Build Miyar 0.4.0 APK
+name: Build Miyar 0.5.0 APK
 
 'on':
   workflow_dispatch:
   push:
-    branches:
-      - main
-    paths:
-      - 'Miyar-Update-0.4.0-Complete.zip'
-      - '.github/workflows/blank.yml'
+    branches: [ "main" ]
 
 permissions:
   contents: read
@@ -15,30 +11,18 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check update archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          ARCHIVE="Miyar-Update-0.4.0-Complete.zip"
-          test -s "$ARCHIVE"
-          unzip -tq "$ARCHIVE"
-          ls -lh "$ARCHIVE"
-
-      - name: Set up Java 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: 'platform-tools'
+        uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
         shell: bash
@@ -51,113 +35,51 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Extract Miyar source
+      - name: Extract and verify Miyar 0.5.0 source
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE_DIR="$RUNNER_TEMP/miyar-source"
-          mkdir -p "$SOURCE_DIR"
-
-          unzip -q "$GITHUB_WORKSPACE/Miyar-Update-0.4.0-Complete.zip" -d "$SOURCE_DIR"
-
-          SETTINGS_FILE="$(find "$SOURCE_DIR" -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
-
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "::error::Gradle settings file not found"
+          ARCHIVE="Miyar-Update-0.5.0-Complete.zip"
+          if [ ! -s "$ARCHIVE" ]; then
+            echo "::error::Missing update archive: $ARCHIVE"
+            ls -lah
             exit 1
           fi
-
-          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
-
-          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "::error::App Gradle file not found"
-            exit 1
-          fi
-
-          echo "MIYAR_PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Fix Material 3 experimental API
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          FILE="$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/FinanceScreens.kt"
-
-          if [ ! -f "$FILE" ]; then
-            echo "::error::FinanceScreens.kt not found"
-            exit 1
-          fi
-
-          python3 - "$FILE" <<'PY'
-          import pathlib
-          import sys
-
-          path = pathlib.Path(sys.argv[1])
-          source = path.read_text(encoding="utf-8")
-
-          annotation = """@file:OptIn(
-              androidx.compose.material3.ExperimentalMaterial3Api::class
-          )
-          """
-
-          if "ExperimentalMaterial3Api" not in source:
-              if not source.startswith("package "):
-                  raise SystemExit("Unexpected Kotlin file structure")
-
-              source = annotation + "\n" + source
-
-          path.write_text(source, encoding="utf-8")
-          print("Material 3 experimental API fix applied.")
-          PY
-
-      - name: Verify source files and database migration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/MainActivity.kt"
-          test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/FinanceScreens.kt"
-          test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/FinanceModels.kt"
-          test -f "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
-
-          grep -q 'ExperimentalMaterial3Api' "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/FinanceScreens.kt"
-          grep -q 'version = 2' "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
-          grep -q 'MIGRATION_1_2' "$MIYAR_PROJECT_DIR/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt"
+          rm -rf project
+          mkdir -p project
+          unzip -q "$ARCHIVE" -d project
+          test -f project/settings.gradle.kts
+          test -f project/build.gradle.kts
+          test -f project/app/build.gradle.kts
+          test -f project/app/src/main/AndroidManifest.xml
 
       - name: Run unit tests and build APK
         shell: bash
         run: |
           set -euo pipefail
-          gradle -p "$MIYAR_PROJECT_DIR" --no-daemon testDebugUnitTest assembleDebug
+          cd project
+          gradle --no-daemon testDebugUnitTest assembleDebug
 
-      - name: Verify APK and checksum
+      - name: Verify APK and calculate checksum
         shell: bash
         run: |
           set -euo pipefail
-
-          APK="$MIYAR_PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
+          APK="project/app/build/outputs/apk/debug/app-debug.apk"
           if [ ! -s "$APK" ]; then
-            echo "::error::APK was not generated"
-            find "$MIYAR_PROJECT_DIR" -path '*/build/outputs/apk/*' -type f || true
+            echo "::error::APK was not generated: $APK"
+            find project/app/build/outputs -type f -maxdepth 6 || true
             exit 1
           fi
-
           unzip -tq "$APK"
+          mkdir -p release
+          cp "$APK" release/Miyar-0.5.0-debug.apk
+          sha256sum release/Miyar-0.5.0-debug.apk | tee release/SHA256SUMS.txt
+          ls -lh release/Miyar-0.5.0-debug.apk
 
-          mkdir -p "$GITHUB_WORKSPACE/release"
-
-          cp "$APK" "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk"
-
-          sha256sum "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk" \
-            | tee "$GITHUB_WORKSPACE/release/SHA256SUMS.txt"
-
-          ls -lh "$GITHUB_WORKSPACE/release/Miyar-0.4.0-debug.apk"
-
-      - name: Upload Miyar APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Miyar-0.4.0-APK
+          name: Miyar-0.5.0-APK
           path: release/*
           if-no-files-found: error
           retention-days: 14
