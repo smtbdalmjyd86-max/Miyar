@@ -1,4 +1,4 @@
-name: Build Miyar 0.5.0 APK
+name: Build Miyar 0.6.0 APK
 
 'on':
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
           SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
-            echo "::error::sdkmanager was not found under $ANDROID_SDK_ROOT/cmdline-tools"
+            echo "::error::sdkmanager was not found"
             exit 1
           fi
           if [ ! -x "$SDKMANAGER" ]; then
@@ -64,20 +64,20 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Extract and verify update archive
+      - name: Extract and verify Miyar 0.6.0 source
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE="Miyar-Update-0.5.0-Complete.zip"
+          ARCHIVE="Miyar-Update-0.6.0-Complete.zip"
           test -s "$ARCHIVE"
           rm -rf project
-          mkdir project
+          mkdir -p project
           unzip -q "$ARCHIVE" -d project
           test -f project/settings.gradle.kts
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
 
-      - name: Run tests and build APK
+      - name: Run unit tests and build APK
         shell: bash
         run: |
           set -euo pipefail
@@ -92,13 +92,13 @@ jobs:
           test -s "$APK"
           unzip -tq "$APK"
           mkdir -p release
-          cp "$APK" release/Miyar-0.5.0-debug.apk
-          sha256sum release/Miyar-0.5.0-debug.apk | tee release/SHA256SUMS.txt
+          cp "$APK" release/Miyar-0.6.0-debug.apk
+          sha256sum release/Miyar-0.6.0-debug.apk | tee release/SHA256SUMS.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Miyar-0.5.0-APK
+          name: Miyar-0.6.0-APK
           path: release/*
           if-no-files-found: error
           retention-days: 14
