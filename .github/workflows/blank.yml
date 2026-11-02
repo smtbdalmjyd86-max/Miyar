@@ -12,6 +12,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -30,16 +32,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+
+          SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+
           if [ -z "$SDKMANAGER" ]; then
-            echo "::error::sdkmanager was not found"
+            echo "::error::Android sdkmanager was not found."
             exit 1
           fi
+
           if [ ! -x "$SDKMANAGER" ]; then
-            echo "::error::sdkmanager is not executable: $SDKMANAGER"
-            ls -l "$SDKMANAGER"
+            echo "::error::sdkmanager is not executable."
             exit 1
           fi
+
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
 
       - name: Accept Android SDK licenses
@@ -48,52 +54,114 @@ jobs:
           set -euo pipefail
           set +o pipefail
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
-          LICENSE_STATUS=${PIPESTATUS[1]}
           set -o pipefail
-          if [ "$LICENSE_STATUS" -ne 0 ]; then exit "$LICENSE_STATUS"; fi
 
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
+
           "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" \
-            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Extract and verify Miyar 0.6.0 source
+      - name: Find and extract Miyar 0.6.0 source
         shell: bash
         run: |
           set -euo pipefail
+
           ARCHIVE="Miyar-Update-0.6.0-Complete.zip"
-          test -s "$ARCHIVE"
+
+          echo "Searching for $ARCHIVE ..."
+
+          ARCHIVE_PATH="$(find . -type f -name "$ARCHIVE" \
+            -not -path "./.git/*" -print -quit)"
+
+          if [ -z "$ARCHIVE_PATH" ]; then
+            echo "::error::The 0.6.0 ZIP archive is missing."
+            echo "Upload this file to the repository:"
+            echo "$ARCHIVE"
+            echo "Files currently found in the repository:"
+            find . -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          echo "Found archive: $ARCHIVE_PATH"
+
+          unzip -tq "$ARCHIVE_PATH"
+
           rm -rf project
           mkdir -p project
-          unzip -q "$ARCHIVE" -d project
-          test -f project/settings.gradle.kts
-          test -f project/app/build.gradle.kts
-          test -f project/app/src/main/AndroidManifest.xml
+
+          unzip -q "$ARCHIVE_PATH" -d project
+
+          SETTINGS_FILE="$(find project -type f \
+            -name settings.gradle.kts -print -quit)"
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "::error::settings.gradle.kts was not found inside the ZIP."
+            find project -maxdepth 4 -type f | sort
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "::error::app/build.gradle.kts is missing."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" ]; then
+            echo "::error::AndroidManifest.xml is missing."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Project source verified:"
+          echo "$PROJECT_DIR"
 
       - name: Run unit tests and build APK
         shell: bash
         run: |
           set -euo pipefail
-          cd project
-          gradle --no-daemon testDebugUnitTest assembleDebug
+
+          echo "Building Miyar 0.6.0..."
+
+          gradle \
+            -p "$PROJECT_DIR" \
+            --no-daemon \
+            testDebugUnitTest \
+            assembleDebug
 
       - name: Verify and package APK
         shell: bash
         run: |
           set -euo pipefail
-          APK="project/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
+
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -s "$APK" ]; then
+            echo "::error::APK was not generated."
+            exit 1
+          fi
+
           unzip -tq "$APK"
+
           mkdir -p release
+
           cp "$APK" release/Miyar-0.6.0-debug.apk
-          sha256sum release/Miyar-0.6.0-debug.apk | tee release/SHA256SUMS.txt
+
+          sha256sum release/Miyar-0.6.0-debug.apk \
+            | tee release/SHA256SUMS.txt
+
+          echo "APK successfully verified."
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
