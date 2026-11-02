@@ -26,7 +26,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Do not chmod SDK files: the runner image may protect these files.
       - name: Locate Android SDK manager
         shell: bash
         run: |
@@ -34,107 +33,67 @@ jobs:
           SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
             echo "::error::sdkmanager was not found under $ANDROID_SDK_ROOT/cmdline-tools"
-            find "$ANDROID_SDK_ROOT" -maxdepth 5 -type f -name sdkmanager -print 2>/dev/null || true
             exit 1
           fi
           if [ ! -x "$SDKMANAGER" ]; then
-            echo "::error::sdkmanager exists but is not executable: $SDKMANAGER"
+            echo "::error::sdkmanager is not executable: $SDKMANAGER"
             ls -l "$SDKMANAGER"
             exit 1
           fi
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-          echo "Using Android SDK manager: $SDKMANAGER"
 
       - name: Accept Android SDK licenses
         shell: bash
         run: |
           set -euo pipefail
-          # The yes command may receive SIGPIPE after sdkmanager accepts all licenses.
           set +o pipefail
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
           LICENSE_STATUS=${PIPESTATUS[1]}
           set -o pipefail
-          if [ "$LICENSE_STATUS" -ne 0 ]; then
-            echo "::error::Android SDK license acceptance failed (exit $LICENSE_STATUS)"
-            exit "$LICENSE_STATUS"
-          fi
+          if [ "$LICENSE_STATUS" -ne 0 ]; then exit "$LICENSE_STATUS"; fi
 
-      - name: Install required Android SDK packages
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
           "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Verify Android SDK packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d "$ANDROID_SDK_ROOT/platform-tools"
-          test -d "$ANDROID_SDK_ROOT/platforms/android-35"
-          test -d "$ANDROID_SDK_ROOT/build-tools/35.0.0"
-          echo "Android SDK packages are ready."
+            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Extract and verify Miyar 0.5.0 source
+      - name: Extract and verify update archive
         shell: bash
         run: |
           set -euo pipefail
           ARCHIVE="Miyar-Update-0.5.0-Complete.zip"
-          if [ ! -s "$ARCHIVE" ]; then
-            echo "::error::Missing update archive: $ARCHIVE"
-            ls -lah
-            exit 1
-          fi
+          test -s "$ARCHIVE"
           rm -rf project
-          mkdir -p project
+          mkdir project
           unzip -q "$ARCHIVE" -d project
-
-          # Support archives that contain one top-level source directory.
-          if [ ! -f project/settings.gradle.kts ]; then
-            SETTINGS="$(find project -mindepth 2 -maxdepth 4 -type f -name settings.gradle.kts | head -n 1)"
-            if [ -n "$SETTINGS" ]; then
-              ROOT_DIR="$(dirname "$SETTINGS")"
-              mkdir -p project_source
-              cp -a "$ROOT_DIR"/. project_source/
-              rm -rf project
-              mv project_source project
-            fi
-          fi
-
           test -f project/settings.gradle.kts
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
-          echo "Miyar source archive verified."
 
-      - name: Run unit tests and build APK
+      - name: Run tests and build APK
         shell: bash
         run: |
           set -euo pipefail
           cd project
           gradle --no-daemon testDebugUnitTest assembleDebug
 
-      - name: Verify APK and calculate checksum
+      - name: Verify and package APK
         shell: bash
         run: |
           set -euo pipefail
           APK="project/app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -s "$APK" ]; then
-            echo "::error::APK was not generated: $APK"
-            find project/app/build/outputs -maxdepth 6 -type f -print || true
-            exit 1
-          fi
+          test -s "$APK"
           unzip -tq "$APK"
           mkdir -p release
           cp "$APK" release/Miyar-0.5.0-debug.apk
           sha256sum release/Miyar-0.5.0-debug.apk | tee release/SHA256SUMS.txt
-          ls -lh release/Miyar-0.5.0-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
