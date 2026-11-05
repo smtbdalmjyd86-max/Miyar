@@ -1,4 +1,4 @@
-name: Build Miyar 0.8.2 APK
+name: Build Miyar 0.9.0 APK
 
 'on':
   workflow_dispatch:
@@ -21,17 +21,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Check update archive
-        run: test -s Miyar-Update-0.8.2-Complete.zip
+        run: test -s Miyar-Update-0.9.0-Complete.zip
 
       - name: Extract Miyar source
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p project
-          unzip -q Miyar-Update-0.8.2-Complete.zip -d project
+          unzip -q Miyar-Update-0.9.0-Complete.zip -d project
           test -f project/settings.gradle.kts
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
+          grep -q 'versionName = "0.9.0"' project/app/build.gradle.kts
+          grep -q 'applicationId = "com.miyar.app"' project/app/build.gradle.kts
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -72,7 +74,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Run tests and build APK
+      - name: Run unit tests and build APK
         working-directory: project
         run: gradle --no-daemon testDebugUnitTest assembleDebug
 
@@ -85,13 +87,13 @@ jobs:
           test -s "$APK"
           unzip -tq "$APK"
           mkdir -p release
-          cp "$APK" release/Miyar-0.8.2-debug.apk
-          sha256sum release/Miyar-0.8.2-debug.apk > release/SHA256SUMS.txt
+          cp "$APK" release/Miyar-0.9.0-debug.apk
+          sha256sum release/Miyar-0.9.0-debug.apk > release/SHA256SUMS.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Miyar-0.8.2-APK
+          name: Miyar-0.9.0-APK
           path: project/release/*
           if-no-files-found: error
           retention-days: 14
