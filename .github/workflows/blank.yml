@@ -39,33 +39,67 @@ jobs:
           echo "Update archive found."
 
       # 4. Extract Android project
-      - name: Prepare Android project
+   
+      - name: Diagnose and prepare Android project
         id: project
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+
+          echo "===== ZIP CONTENTS ====="
+          unzip -l Miyar-Update-0.9.3.6-Priority1.zip | head -100
 
           mkdir -p project
           unzip -q Miyar-Update-0.9.3.6-Priority1.zip -d project
 
-          PROJECT_DIR="$(find project -type f \
-            -name settings.gradle.kts \
-            -print -quit | xargs dirname)"
+          echo "===== SEARCHING PROJECT FILES ====="
 
-          if [ -z "$PROJECT_DIR" ] || [ ! -d "$PROJECT_DIR" ]; then
-            echo "Android project directory not found."
+          find project -type f \( \
+            -name "settings.gradle" -o \
+            -name "settings.gradle.kts" -o \
+            -name "build.gradle" -o \
+            -name "build.gradle.kts" -o \
+            -name "gradlew" -o \
+            -name "AndroidManifest.xml" \
+          \) -print | head -100
+
+          SETTINGS="$(find project -type f \
+            \( -name settings.gradle.kts -o -name settings.gradle \) \
+            -print -quit)"
+
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::SETTINGS FILE NOT FOUND"
             exit 1
           fi
 
-          test -f "$PROJECT_DIR/app/build.gradle.kts"
-          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-          test -f "$PROJECT_DIR/gradlew"
+          PROJECT_DIR="$(dirname "$SETTINGS")"
 
-          chmod +x "$PROJECT_DIR/gradlew"
+          echo "PROJECT DIRECTORY: $PROJECT_DIR"
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ] && \
+             [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+            echo "::error::APP BUILD FILE NOT FOUND"
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" ]; then
+            echo "::error::ANDROID MANIFEST NOT FOUND"
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR"
+
+          if [ -f "$PROJECT_DIR/gradlew" ]; then
+            chmod +x "$PROJECT_DIR/gradlew"
+            echo "GRADLE WRAPPER FOUND"
+          else
+            echo "::warning::GRADLE WRAPPER NOT FOUND"
+          fi
 
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-          echo "Android project verified: $PROJECT_DIR"
+          echo "PROJECT VERIFIED"
+
 
       # 5. Verify application identity and version
       - name: Verify app version and package
