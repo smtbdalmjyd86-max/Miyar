@@ -1,5 +1,4 @@
-
-name: Build Miyar 0.9.3.6 Priority 1 Signed APK
+Name: Build Miyar 0.9.3.6 Priority 1 Signed APK
 
 'on':
   workflow_dispatch:
@@ -69,8 +68,8 @@ jobs:
 
       - name: Install Android SDK components
         run: |
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
+          yes | sdkmanager --licenses || true
+          sdkmanager "cmdline-tools;latest" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Restore release signing key
         env:
