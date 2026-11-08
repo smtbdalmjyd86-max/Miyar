@@ -13,12 +13,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Check update archive
+        shell: bash
         run: |
+          set -euo pipefail
           test -f Miyar-Update-0.9.3.6-Priority1.zip
 
       - name: Set up Java 17
@@ -28,7 +34,9 @@ jobs:
           java-version: '17'
 
       - name: Prepare Android project
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p project
           unzip -q Miyar-Update-0.9.3.6-Priority1.zip -d project
 
@@ -38,43 +46,97 @@ jobs:
 
       - name: Verify app version and package
         working-directory: project
+        shell: bash
         run: |
-          grep -q 'applicationId = "com.miyar.app"' app/build.gradle.kts
-          grep -q 'versionCode = 20' app/build.gradle.kts
-          grep -q 'versionName = "0.9.3.6"' app/build.gradle.kts
+          set -euo pipefail
+          grep -Fq 'applicationId = "com.miyar.app"' app/build.gradle.kts
+          grep -Fq 'versionCode = 20' app/build.gradle.kts
+          grep -Fq 'versionName = "0.9.3.6"' app/build.gradle.kts
 
       - name: Configure Gradle memory
         working-directory: project
         shell: bash
         run: |
+          set -euo pipefail
           touch gradle.properties
-
           sed -i \
             -e '/^org.gradle.jvmargs=/d' \
             -e '/^org.gradle.workers.max=/d' \
             -e '/^org.gradle.parallel=/d' \
             -e '/^kotlin.compiler.execution.strategy=/d' \
             gradle.properties
-
-          cat >> gradle.properties <<'EOF'
+          cat >> gradle.properties <<'PROPERTIES'
           org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8
           org.gradle.workers.max=1
           org.gradle.parallel=false
           kotlin.compiler.execution.strategy=in-process
-          EOF
+          PROPERTIES
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK components
+      # Do not use android-actions/setup-android here. Its internal sdkmanager
+      # invocation is the exact step that failed in run #97.
+      - name: Prepare Android SDK tools
+        shell: bash
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "cmdline-tools;latest" "platforms;android-35" "build-tools;35.0.0"
+          set -euo pipefail
+          test -d "$ANDROID_HOME"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -perm -u+x | sort -V | tail -n 1)"
+          fi
+          test -n "$SDKMANAGER"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --version
+
+          # Accept licenses without allowing the yes command's SIGPIPE to fail the job.
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+          LICENSE_STATUS=${PIPESTATUS[1]}
+          set -o pipefail
+          if [ "$LICENSE_STATUS" -ne 0 ]; then
+            echo "SDK license acceptance failed (exit $LICENSE_STATUS)"
+            exit "$LICENSE_STATUS"
+          fi
+
+      - name: Install Android SDK components (with retries)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -perm -u+x | sort -V | tail -n 1)"
+          fi
+          test -x "$SDKMANAGER"
+
+          success=0
+          for attempt in 1 2 3; do
+            echo "Android SDK install attempt $attempt of 3"
+            if "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
+              "platform-tools" \
+              "platforms;android-35" \
+              "build-tools;35.0.0"; then
+              success=1
+              break
+            fi
+            echo "sdkmanager failed on attempt $attempt"
+            sleep $((attempt * 10))
+          done
+          test "$success" -eq 1
+
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
+          test -x "$ANDROID_HOME/platform-tools/adb"
 
       - name: Restore release signing key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        shell: bash
         run: |
+          set -euo pipefail
           test -n "$ANDROID_KEYSTORE_BASE64"
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/miyar-release.jks"
           test -s "$RUNNER_TEMP/miyar-release.jks"
@@ -86,17 +148,22 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
         run: |
+          set -euo pipefail
           gradle --version
           gradle --no-daemon --max-workers=1 testDebugUnitTest assembleRelease
 
       - name: Verify release APK
+        shell: bash
         run: |
-          APK=$(find project/app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)
+          set -euo pipefail
+          APK="$(find project/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
           test -n "$APK"
           test -f "$APK"
-
-          apksigner verify --verbose "$APK"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose "$APK"
 
           mkdir -p release-output
           cp "$APK" release-output/Miyar-0.9.3.6-Priority1-Signed.apk
