@@ -1,4 +1,4 @@
-Name: Build Miyar 0.9.3.6 Priority 1 Signed APK
+name: Build Miyar 0.9.3.6 Priority 1 Signed APK
 
 'on':
   workflow_dispatch:
