@@ -1,4 +1,3 @@
-
 name: Build Miyar 0.9.3.6 Priority 1 Signed APK
 
 'on':
@@ -13,123 +12,66 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      # 1. Download repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Setup Java 17
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      # 3. Verify update archive
-      - name: Check update archive
+      - name: Locate and check update archive
         shell: bash
         run: |
           set -euo pipefail
-          test -f Miyar-Update-0.9.3.6-Priority1.zip
-          echo "Update archive found."
+          ARCHIVE_NAME="Miyar-Update-0.9.3.6-Priority1.zip"
+          ARCHIVE_PATH="$(find . -type f -name "$ARCHIVE_NAME" -not -path './.git/*' -print -quit)"
+          if [ -z "$ARCHIVE_PATH" ] || [ ! -s "$ARCHIVE_PATH" ]; then
+            echo "::error::Missing or empty update archive: $ARCHIVE_NAME"
+            exit 1
+          fi
+          echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
 
-      # 4. Extract Android project
-   
-      - name: Diagnose and prepare Android project
+      - name: Extract and validate Miyar source
         id: project
         shell: bash
         run: |
-          set -uo pipefail
-
-          echo "===== ZIP CONTENTS ====="
-          unzip -l Miyar-Update-0.9.3.6-Priority1.zip | head -100
-
+          set -euo pipefail
+          rm -rf project
           mkdir -p project
-          unzip -q Miyar-Update-0.9.3.6-Priority1.zip -d project
+          unzip -q "$ARCHIVE_PATH" -d project
 
-          echo "===== SEARCHING PROJECT FILES ====="
+          test -f project/settings.gradle.kts
+          test -f project/build.gradle.kts
+          test -f project/app/build.gradle.kts
+          test -f project/app/src/main/AndroidManifest.xml
+          test -f project/gradle.properties
 
-          find project -type f \( \
-            -name "settings.gradle" -o \
-            -name "settings.gradle.kts" -o \
-            -name "build.gradle" -o \
-            -name "build.gradle.kts" -o \
-            -name "gradlew" -o \
-            -name "AndroidManifest.xml" \
-          \) -print | head -100
+          grep -Fq 'applicationId = "com.miyar.app"' project/app/build.gradle.kts
+          grep -Fq 'versionCode = 20' project/app/build.gradle.kts
+          grep -Fq 'versionName = "0.9.3.6"' project/app/build.gradle.kts
 
-          SETTINGS="$(find project -type f \
-            \( -name settings.gradle.kts -o -name settings.gradle \) \
-            -print -quit)"
+          echo "dir=project" >> "$GITHUB_OUTPUT"
+          echo "Miyar source and app identity validated."
 
-          if [ -z "$SETTINGS" ]; then
-            echo "::error::SETTINGS FILE NOT FOUND"
-            exit 1
-          fi
-
-          PROJECT_DIR="$(dirname "$SETTINGS")"
-
-          echo "PROJECT DIRECTORY: $PROJECT_DIR"
-
-          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ] && \
-             [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
-            echo "::error::APP BUILD FILE NOT FOUND"
-            exit 1
-          fi
-
-          if [ ! -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" ]; then
-            echo "::error::ANDROID MANIFEST NOT FOUND"
-            exit 1
-          fi
-
-          echo "PROJECT_DIR=$PROJECT_DIR"
-
-          if [ -f "$PROJECT_DIR/gradlew" ]; then
-            chmod +x "$PROJECT_DIR/gradlew"
-            echo "GRADLE WRAPPER FOUND"
-          else
-            echo "::warning::GRADLE WRAPPER NOT FOUND"
-          fi
-
-          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-
-          echo "PROJECT VERIFIED"
-
-
-      # 5. Verify application identity and version
-      - name: Verify app version and package
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          grep -Fq 'applicationId = "com.miyar.app"' app/build.gradle.kts
-          grep -Fq 'versionCode = 20' app/build.gradle.kts
-          grep -Fq 'versionName = "0.9.3.6"' app/build.gradle.kts
-
-          echo "Application identity verified."
-
-      # 6. Configure Gradle memory
       - name: Configure Gradle memory
-        working-directory: ${{ steps.project.outputs.dir }}
+        working-directory: project
         shell: bash
         run: |
           set -euo pipefail
-
           touch gradle.properties
-
           sed -i \
             -e '/^org.gradle.jvmargs=/d' \
             -e '/^org.gradle.workers.max=/d' \
             -e '/^org.gradle.parallel=/d' \
             -e '/^kotlin.compiler.execution.strategy=/d' \
             gradle.properties
-
           cat >> gradle.properties <<'PROPERTIES'
           org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8
           org.gradle.workers.max=1
@@ -137,115 +79,98 @@ jobs:
           kotlin.compiler.execution.strategy=in-process
           PROPERTIES
 
-      # 7. Setup Android SDK
-      - name: Prepare Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Locate Android SDK manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::Android sdkmanager was not found on the runner."
+            exit 1
+          fi
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
+          LICENSE_STATUS=${PIPESTATUS[1]}
+          set -o pipefail
+          test "$LICENSE_STATUS" -eq 0
 
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-
-          sdkmanager --install \
+          "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      # 8. Restore signing key
-      - name: Restore and verify signing key
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Restore permanent release signing key
         shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-
-          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$KEYSTORE_B64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
 
           KEYSTORE="$RUNNER_TEMP/miyar-release.jks"
-
-          echo "$ANDROID_KEYSTORE_BASE64" \
-            | base64 --decode > "$KEYSTORE"
-
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
           test -s "$KEYSTORE"
+          keytool -list -keystore "$KEYSTORE" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
 
-          echo "ANDROID_KEYSTORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
-          echo "KEYSTORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
-          echo "STORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
+          {
+            echo "ANDROID_KEYSTORE_PATH=$KEYSTORE"
+            echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
 
-          echo "Signing key restored successfully."
-
-      # 9. Verify signing credentials
-      - name: Verify signing variables
+      - name: Build, test, and sign release APK
+        working-directory: project
+        shell: bash
         env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/miyar-release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          gradle --version
+          gradle --no-daemon --max-workers=1 testDebugUnitTest assembleRelease
+
+      - name: Verify signed APK and prepare release files
+        working-directory: project
         shell: bash
         run: |
           set -euo pipefail
-
-          test -s "$ANDROID_KEYSTORE_FILE"
-          test -n "$ANDROID_KEYSTORE_PASSWORD"
-          test -n "$ANDROID_KEY_ALIAS"
-          test -n "$ANDROID_KEY_PASSWORD"
-
-          echo "Signing credentials verified."
-
-      # 10. Build and test release
-      - name: Build and test release
-        working-directory: ${{ steps.project.outputs.dir }}
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-
-          ORG_GRADLE_PROJECT_storeFile: ${{ runner.temp }}/miyar-release.jks
-          ORG_GRADLE_PROJECT_storePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ORG_GRADLE_PROJECT_keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ORG_GRADLE_PROJECT_keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ./gradlew --version
-
-          ./gradlew \
-            --no-daemon \
-            --max-workers=1 \
-            testDebugUnitTest \
-            assembleRelease
-
-      # 11. Verify signed APK
-      - name: Verify signed APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="$(find '${{ steps.project.outputs.dir }}/app/build/outputs/apk/release' \
-            -maxdepth 1 -type f \
-            -name '*.apk' \
-            -print -quit)"
-
-          test -n "$APK"
-          test -f "$APK"
-
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-
           test -x "$APKSIGNER"
-
           "$APKSIGNER" verify --verbose "$APK"
+          mkdir -p release
+          cp "$APK" release/Miyar-0.9.3.6-Priority1-Signed.apk
+          sha256sum release/Miyar-0.9.3.6-Priority1-Signed.apk > release/SHA256SUMS.txt
 
-          mkdir -p release-output
-
-          cp "$APK" \
-            release-output/Miyar-0.9.3.6-Priority1-Signed.apk
-
-          echo "Signed APK verified successfully."
-
-      # 12. Upload APK
-      - name: Upload signed APK
+      - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: Miyar-0.9.3.6-Priority1-Signed-APK
-          path: release-output/Miyar-0.9.3.6-Priority1-Signed.apk
+          path: project/release/*
           if-no-files-found: error
+          retention-days: 30
