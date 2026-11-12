@@ -1,4 +1,4 @@
-name: Build Miyar 1.0.2 Signed APK
+name: Build Miyar 1.0.3 Signed APK
 
 'on':
   workflow_dispatch:
@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE_NAME="Miyar-Update-1.0.2-Full.zip"
+          ARCHIVE_NAME="Miyar-Update-1.0.3-Full.zip"
           ARCHIVE_PATH="$(find . -type f -name "$ARCHIVE_NAME" -not -path './.git/*' -print -quit)"
           if [ -z "$ARCHIVE_PATH" ] || [ ! -s "$ARCHIVE_PATH" ]; then
             echo "::error::Missing or empty source archive: $ARCHIVE_NAME"
@@ -51,9 +51,9 @@ jobs:
           test -f project/app/src/main/AndroidManifest.xml
           test -f project/gradle.properties
           grep -Fq 'applicationId = "com.miyar.app"' project/app/build.gradle.kts
-          grep -Fq 'versionCode = 23' project/app/build.gradle.kts
-          grep -Fq 'versionName = "1.0.2"' project/app/build.gradle.kts
-          echo "Miyar 1.0.2 source identity validated."
+          grep -Fq 'versionCode = 24' project/app/build.gradle.kts
+          grep -Fq 'versionName = "1.0.3"' project/app/build.gradle.kts
+          echo "Miyar 1.0.3 source identity validated."
 
       - name: Configure Gradle memory for Android and Kotlin compilation
         working-directory: project
