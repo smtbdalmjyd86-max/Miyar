@@ -1,4 +1,4 @@
-name: Build Miyar 1.0.4 Signed APK
+name: Build Miyar 1.0.4 Hotfix Signed APK
 
 'on':
   workflow_dispatch:
@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE_NAME="Miyar-Update-1.0.4-Full.zip"
+          ARCHIVE_NAME="Miyar-Update-1.0.4-Hotfix.zip"
           ARCHIVE_PATH="$(find . -type f -name "$ARCHIVE_NAME" -not -path './.git/*' -print -quit)"
           if [ -z "$ARCHIVE_PATH" ] || [ ! -s "$ARCHIVE_PATH" ]; then
             echo "::error::Missing or empty source archive: $ARCHIVE_NAME"
@@ -51,7 +51,7 @@ jobs:
           test -f project/app/src/main/AndroidManifest.xml
           test -f project/gradle.properties
           grep -Fq 'applicationId = "com.miyar.app"' project/app/build.gradle.kts
-          grep -Fq 'versionCode = 25' project/app/build.gradle.kts
+          grep -Fq 'versionCode = 26' project/app/build.gradle.kts
           grep -Fq 'versionName = "1.0.4"' project/app/build.gradle.kts
           echo "Miyar 1.0.4 source identity validated."
 
@@ -158,20 +158,20 @@ jobs:
           test -x "$APKSIGNER"
           test -x "$AAPT"
           "$APKSIGNER" verify --verbose "$APK"
-          "$AAPT" dump badging "$APK" | grep -F "package: name='com.miyar.app' versionCode='25' versionName='1.0.4'"
+          "$AAPT" dump badging "$APK" | grep -F "package: name='com.miyar.app' versionCode='26' versionName='1.0.4'"
           KEY_CERT_SHA="$(keytool -list -v -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':')"
           APK_CERT_SHA="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')"
           test -n "$KEY_CERT_SHA"
           test -n "$APK_CERT_SHA"
           test "${KEY_CERT_SHA,,}" = "${APK_CERT_SHA,,}"
           mkdir -p release
-          cp "$APK" release/Miyar-1.0.4-Signed.apk
-          sha256sum release/Miyar-1.0.4-Signed.apk > release/SHA256SUMS.txt
+          cp "$APK" release/Miyar-1.0.4-Hotfix-Signed.apk
+          sha256sum release/Miyar-1.0.4-Hotfix-Signed.apk > release/SHA256SUMS.txt
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Miyar-1.0.4-Signed-APK
+          name: Miyar-1.0.4-Hotfix-Signed-APK
           path: project/release/*
           if-no-files-found: error
           retention-days: 30
