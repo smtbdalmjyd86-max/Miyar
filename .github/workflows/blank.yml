@@ -1,3 +1,4 @@
+
 name: Build Miyar 1.0.4 Hotfix Signed APK
 
 'on':
@@ -32,10 +33,12 @@ jobs:
           set -euo pipefail
           ARCHIVE_NAME="Miyar-Update-1.0.4-Hotfix.zip"
           ARCHIVE_PATH="$(find . -type f -name "$ARCHIVE_NAME" -not -path './.git/*' -print -quit)"
+
           if [ -z "$ARCHIVE_PATH" ] || [ ! -s "$ARCHIVE_PATH" ]; then
             echo "::error::Missing or empty source archive: $ARCHIVE_NAME"
             exit 1
           fi
+
           echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
 
       - name: Extract and validate package identity
@@ -45,28 +48,63 @@ jobs:
           rm -rf project
           mkdir -p project
           unzip -q "$ARCHIVE_PATH" -d project
+
           test -f project/settings.gradle.kts
           test -f project/build.gradle.kts
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
           test -f project/gradle.properties
+
           grep -Fq 'applicationId = "com.miyar.app"' project/app/build.gradle.kts
           grep -Fq 'versionCode = 26' project/app/build.gradle.kts
           grep -Fq 'versionName = "1.0.4"' project/app/build.gradle.kts
+
           echo "Miyar 1.0.4 source identity validated."
 
-      - name: Configure Gradle memory for Android and Kotlin compilation
+      - name: Fix missing Compose drawBehind import
+        working-directory: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MAIN_FILE="$(find app/src/main -type f -name 'MainActivity.kt' -print -quit)"
+
+          if [ -z "$MAIN_FILE" ]; then
+            echo "::error::MainActivity.kt was not found."
+            exit 1
+          fi
+
+          IMPORT_LINE="import androidx.compose.ui.draw.drawBehind"
+
+          if ! grep -Fqx "$IMPORT_LINE" "$MAIN_FILE"; then
+            if grep -q '^package ' "$MAIN_FILE"; then
+              sed -i "/^package /a\\
+          \\
+          $IMPORT_LINE
+          " "$MAIN_FILE"
+            else
+              echo "::error::No package declaration found in MainActivity.kt."
+              exit 1
+            fi
+          fi
+
+          grep -Fqx "$IMPORT_LINE" "$MAIN_FILE"
+          echo "Compose drawBehind import verified in $MAIN_FILE"
+
+      - name: Configure Gradle memory
         working-directory: project
         shell: bash
         run: |
           set -euo pipefail
           touch gradle.properties
+
           sed -i \
             -e '/^org.gradle.jvmargs=/d' \
             -e '/^org.gradle.workers.max=/d' \
             -e '/^org.gradle.parallel=/d' \
             -e '/^kotlin.compiler.execution.strategy=/d' \
             gradle.properties
+
           cat >> gradle.properties <<'PROPERTIES'
           org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8
           org.gradle.workers.max=1
@@ -78,11 +116,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+
           if [ -z "$SDKMANAGER" ]; then
-            echo "::error::Android sdkmanager was not found on the runner."
+            echo "::error::Android sdkmanager was not found."
             exit 1
           fi
+
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
 
       - name: Accept Android SDK licenses
@@ -90,8 +131,10 @@ jobs:
         run: |
           set -euo pipefail
           set +o pipefail
+
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
           LICENSE_STATUS=${PIPESTATUS[1]}
+
           set -o pipefail
           test "$LICENSE_STATUS" -eq 0
 
@@ -99,6 +142,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --install \
             "platform-tools" \
             "platforms;android-35" \
@@ -118,14 +162,22 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+
           test -n "$KEYSTORE_B64"
           test -n "$KEYSTORE_PASSWORD"
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
+
           KEYSTORE="$RUNNER_TEMP/miyar-release.jks"
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+
           test -s "$KEYSTORE"
-          keytool -list -keystore "$KEYSTORE" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+
+          keytool -list \
+            -keystore "$KEYSTORE" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
+
           {
             echo "ANDROID_KEYSTORE_PATH=$KEYSTORE"
             echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
@@ -143,27 +195,53 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+
           gradle --version
           gradle --no-daemon --max-workers=1 testDebugUnitTest assembleRelease
 
       - name: Verify APK identity and signing certificate
         working-directory: project
         shell: bash
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/miyar-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
+
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
+
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+
           test -x "$APKSIGNER"
           test -x "$AAPT"
+
           "$APKSIGNER" verify --verbose "$APK"
-          "$AAPT" dump badging "$APK" | grep -F "package: name='com.miyar.app' versionCode='26' versionName='1.0.4'"
-          KEY_CERT_SHA="$(keytool -list -v -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':')"
-          APK_CERT_SHA="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')"
+
+          "$AAPT" dump badging "$APK" |
+            grep -F "package: name='com.miyar.app' versionCode='26' versionName='1.0.4'"
+
+          KEY_CERT_SHA="$(
+            keytool -list -v \
+              -keystore "$ANDROID_KEYSTORE_PATH" \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+              -alias "$ANDROID_KEY_ALIAS" |
+            awk -F': ' '/SHA256:/{print $2; exit}' |
+            tr -d ':'
+          )"
+
+          APK_CERT_SHA="$(
+            "$APKSIGNER" verify --print-certs "$APK" |
+            awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' |
+            tr -d ':'
+          )"
+
           test -n "$KEY_CERT_SHA"
           test -n "$APK_CERT_SHA"
           test "${KEY_CERT_SHA,,}" = "${APK_CERT_SHA,,}"
+
           mkdir -p release
           cp "$APK" release/Miyar-1.0.4-Hotfix-Signed.apk
           sha256sum release/Miyar-1.0.4-Hotfix-Signed.apk > release/SHA256SUMS.txt
