@@ -1,3 +1,4 @@
+
 name: Build Miyar 1.0.3 Signed APK
 
 'on':
@@ -12,6 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -26,47 +28,67 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Locate and validate full Miyar source archive
+      - name: Locate and validate Miyar source archive
         shell: bash
         run: |
           set -euo pipefail
+
           ARCHIVE_NAME="Miyar-Update-1.0.3-Full.zip"
-          ARCHIVE_PATH="$(find . -type f -name "$ARCHIVE_NAME" -not -path './.git/*' -print -quit)"
+
+          ARCHIVE_PATH="$(find . -type f \
+            -name "$ARCHIVE_NAME" \
+            -not -path './.git/*' \
+            -print -quit)"
+
           if [ -z "$ARCHIVE_PATH" ] || [ ! -s "$ARCHIVE_PATH" ]; then
-            echo "::error::Missing or empty source archive: $ARCHIVE_NAME"
+            echo "::error::Missing source archive: $ARCHIVE_NAME"
             exit 1
           fi
+
           echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
 
-      - name: Extract and validate package identity
+      - name: Extract and validate Miyar project
         shell: bash
         run: |
           set -euo pipefail
+
           rm -rf project
           mkdir -p project
+
           unzip -q "$ARCHIVE_PATH" -d project
+
           test -f project/settings.gradle.kts
           test -f project/build.gradle.kts
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
           test -f project/gradle.properties
-          grep -Fq 'applicationId = "com.miyar.app"' project/app/build.gradle.kts
-          grep -Fq 'versionCode = 24' project/app/build.gradle.kts
-          grep -Fq 'versionName = "1.0.3"' project/app/build.gradle.kts
-          echo "Miyar 1.0.3 source identity validated."
 
-      - name: Configure Gradle memory for Android and Kotlin compilation
+          grep -Fq 'applicationId = "com.miyar.app"' \
+            project/app/build.gradle.kts
+
+          grep -Fq 'versionCode = 24' \
+            project/app/build.gradle.kts
+
+          grep -Fq 'versionName = "1.0.3"' \
+            project/app/build.gradle.kts
+
+          echo "Miyar 1.0.3 source validated."
+
+      - name: Configure Gradle memory
         working-directory: project
         shell: bash
         run: |
           set -euo pipefail
+
           touch gradle.properties
+
           sed -i \
             -e '/^org.gradle.jvmargs=/d' \
             -e '/^org.gradle.workers.max=/d' \
             -e '/^org.gradle.parallel=/d' \
             -e '/^kotlin.compiler.execution.strategy=/d' \
             gradle.properties
+
           cat >> gradle.properties <<'PROPERTIES'
           org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8
           org.gradle.workers.max=1
@@ -78,27 +100,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+
+          SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null \
+            | sort -V | tail -n 1)"
+
           if [ -z "$SDKMANAGER" ]; then
-            echo "::error::Android sdkmanager was not found on the runner."
+            echo "::error::Android sdkmanager not found."
             exit 1
           fi
+
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
 
       - name: Accept Android SDK licenses
         shell: bash
         run: |
           set -euo pipefail
+
           set +o pipefail
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
+          yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROID_SDK_ROOT" --licenses
+
           LICENSE_STATUS=${PIPESTATUS[1]}
           set -o pipefail
+
           test "$LICENSE_STATUS" -eq 0
 
-      - name: Install required Android SDK packages
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
+
           "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --install \
             "platform-tools" \
             "platforms;android-35" \
@@ -118,14 +150,23 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+
           test -n "$KEYSTORE_B64"
           test -n "$KEYSTORE_PASSWORD"
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
+
           KEYSTORE="$RUNNER_TEMP/miyar-release.jks"
+
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+
           test -s "$KEYSTORE"
-          keytool -list -keystore "$KEYSTORE" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+
+          keytool -list \
+            -keystore "$KEYSTORE" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
+
           {
             echo "ANDROID_KEYSTORE_PATH=$KEYSTORE"
             echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
@@ -143,35 +184,92 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          gradle --version
-          gradle --no-daemon --max-workers=1 testDebugUnitTest assembleRelease
 
-      - name: Verify APK identity and signing certificate
+          gradle --version
+
+          gradle --no-daemon \
+            --max-workers=1 \
+            testDebugUnitTest \
+            assembleRelease
+
+      - name: Verify APK identity and signature
         working-directory: project
         shell: bash
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/miyar-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
+
           APK="app/build/outputs/apk/release/app-release.apk"
-          test -s "$APK"
+
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+
+          test -s "$APK"
           test -x "$APKSIGNER"
           test -x "$AAPT"
-          "$APKSIGNER" verify --verbose "$APK"
-          "$AAPT" dump badging "$APK" | grep -F "package: name='com.miyar.app' versionCode='23' versionName='1.0.2'"
-          KEY_CERT_SHA="$(keytool -list -v -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':')"
-          APK_CERT_SHA="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')"
+
+          echo "Checking APK signature..."
+
+          VERIFY_OUTPUT="$("$APKSIGNER" verify --verbose "$APK" 2>&1)"
+          echo "$VERIFY_OUTPUT"
+
+          echo "$VERIFY_OUTPUT" | grep -Fq \
+            "Verified using v2 scheme (APK Signature Scheme v2): true"
+
+          echo "APK v2 signature verified."
+
+          echo "Checking package and version..."
+
+          BADGING="$("$AAPT" dump badging "$APK")"
+          echo "$BADGING" | grep -Fq \
+            "package: name='com.miyar.app' versionCode='24' versionName='1.0.3'"
+
+          echo "Package identity verified."
+
+          echo "Checking permanent signing certificate..."
+
+          KEY_CERT_SHA="$(
+            keytool -list -v \
+              -keystore "$ANDROID_KEYSTORE_PATH" \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+              -alias "$ANDROID_KEY_ALIAS" |
+            awk -F': ' '/SHA256:/{print $2; exit}' |
+            tr -d ':'
+          )"
+
+          APK_CERT_SHA="$(
+            "$APKSIGNER" verify --print-certs "$APK" |
+            awk -F': ' \
+              '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' |
+            tr -d ':'
+          )"
+
           test -n "$KEY_CERT_SHA"
           test -n "$APK_CERT_SHA"
-          test "${KEY_CERT_SHA,,}" = "${APK_CERT_SHA,,}"
+
+          if [ "${KEY_CERT_SHA,,}" != "${APK_CERT_SHA,,}" ]; then
+            echo "::error::APK signing certificate does not match the permanent Miyar key."
+            exit 1
+          fi
+
+          echo "Permanent Miyar signing certificate verified."
+
           mkdir -p release
-          cp "$APK" release/Miyar-1.0.2-Signed.apk
-          sha256sum release/Miyar-1.0.2-Signed.apk > release/SHA256SUMS.txt
+
+          cp "$APK" release/Miyar-1.0.3-Signed.apk
+
+          sha256sum release/Miyar-1.0.3-Signed.apk \
+            > release/SHA256SUMS.txt
+
+          echo "All APK verification checks passed."
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Miyar-1.0.2-Signed-APK
+          name: Miyar-1.0.3-Signed-APK
           path: project/release/*
           if-no-files-found: error
           retention-days: 30
