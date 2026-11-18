@@ -1,3 +1,4 @@
+
 name: Build Miyar 1.0.7 Complete Signed APK
 
 'on':
@@ -48,14 +49,17 @@ jobs:
           rm -rf project
           mkdir -p project
           unzip -q "$ARCHIVE_PATH" -d project
+
           test -f project/settings.gradle.kts
           test -f project/build.gradle.kts
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/AndroidManifest.xml
           test -f project/gradle.properties
+
           grep -Fq 'applicationId = "com.miyar.app"' project/app/build.gradle.kts
           grep -Fq 'versionCode = 29' project/app/build.gradle.kts
           grep -Fq 'versionName = "1.0.7"' project/app/build.gradle.kts
+
           grep -Fq 'import androidx.compose.ui.draw.drawBehind' project/app/src/main/java/com/miyar/app/MainActivity.kt
           grep -Fq 'version = 12' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
           grep -Fq 'MIGRATION_11_12' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
@@ -69,17 +73,40 @@ jobs:
           grep -Fq 'listOf("سقي")' project/app/src/main/java/com/miyar/app/MainActivity.kt
           grep -Fq 'حالات الأصناف:' project/app/src/main/java/com/miyar/app/MainActivity.kt
           grep -Fq 'ChevronRight' project/app/src/main/java/com/miyar/app/FinanceScreens.kt
+
           if unzip -Z1 "$ARCHIVE_PATH" | grep -Eiq '(^|/)([^/]+\.(jks|keystore|p12))$'; then
             echo "::error::Signing key material must never be included in the source archive."
             exit 1
           fi
+
           grep -Fq 'photoUri: String?' project/app/src/main/java/com/miyar/app/data/Models.kt
           grep -Fq 'NavigationBarItem(' project/app/src/main/java/com/miyar/app/MainActivity.kt
           grep -Fq 'plantation_photos' project/app/src/main/java/com/miyar/app/MiyarTransfer.kt
+
           test -s project/app/src/main/res/drawable-nodpi/miyar_plant_branch.png
           test -s project/app/src/main/res/drawable/miyar_splash_background.xml
           test -s project/app/src/main/res/values-v31/styles.xml
-          echo "Miyar 1.0.7 package identity, Room version 12, existing migration, harvest filters, inventory quantity formatting, separate chemical selectors, water suggestion and visual resources validated."
+
+          echo "Miyar 1.0.7 source validation completed."
+
+      # إصلاح خطأ Kotlin: ArrowDropDown غير مستوردة
+      - name: Fix missing ArrowDropDown import
+        working-directory: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MAIN_ACTIVITY="app/src/main/java/com/miyar/app/MainActivity.kt"
+
+          test -s "$MAIN_ACTIVITY"
+
+          if ! grep -Fqx 'import androidx.compose.material.icons.filled.ArrowDropDown' "$MAIN_ACTIVITY"; then
+            sed -i '/^import androidx.compose.material.icons.filled.ArrowBack$/a import androidx.compose.material.icons.filled.ArrowDropDown' "$MAIN_ACTIVITY"
+          fi
+
+          grep -Fqx 'import androidx.compose.material.icons.filled.ArrowDropDown' "$MAIN_ACTIVITY"
+
+          echo "ArrowDropDown import verified."
 
       - name: Configure Gradle memory
         working-directory: project
@@ -93,6 +120,7 @@ jobs:
             -e '/^org.gradle.parallel=/d' \
             -e '/^kotlin.compiler.execution.strategy=/d' \
             gradle.properties
+
           cat >> gradle.properties <<'PROPERTIES'
           org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8
           org.gradle.workers.max=1
@@ -148,10 +176,13 @@ jobs:
           test -n "$KEYSTORE_PASSWORD"
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
+
           KEYSTORE="$RUNNER_TEMP/miyar-release.jks"
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
           test -s "$KEYSTORE"
+
           keytool -list -keystore "$KEYSTORE" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+
           {
             echo "ANDROID_KEYSTORE_PATH=$KEYSTORE"
             echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
@@ -181,19 +212,28 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
+
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
+
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+
           test -x "$APKSIGNER"
           test -x "$AAPT"
+
           "$APKSIGNER" verify --verbose "$APK"
+
           "$AAPT" dump badging "$APK" | grep -F "package: name='com.miyar.app' versionCode='29' versionName='1.0.7'"
+
           KEY_CERT_SHA="$(keytool -list -v -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':')"
+
           APK_CERT_SHA="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')"
+
           test -n "$KEY_CERT_SHA"
           test -n "$APK_CERT_SHA"
           test "${KEY_CERT_SHA,,}" = "${APK_CERT_SHA,,}"
+
           mkdir -p release
           cp "$APK" release/Miyar-1.0.7-Complete-Signed.apk
           sha256sum release/Miyar-1.0.7-Complete-Signed.apk > release/SHA256SUMS.txt
