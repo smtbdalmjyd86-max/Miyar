@@ -1,4 +1,4 @@
-name: Build Miyar 1.1.2 Complete Signed APK
+name: Build Miyar 1.1.3 Complete Signed APK
 
 'on':
   workflow_dispatch:
@@ -6,7 +6,7 @@ name: Build Miyar 1.1.2 Complete Signed APK
     branches:
       - main
     paths:
-      - 'Miyar-Update-1.1.2-Complete.zip'
+      - 'Miyar-Update-1.1.3-Complete.zip'
       - '.github/workflows/blank.yml'
 
 permissions:
@@ -29,11 +29,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Locate and validate Miyar 1.1.2 source archive
+      - name: Locate and validate Miyar 1.1.3 source archive
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE_NAME="Miyar-Update-1.1.2-Complete.zip"
+          ARCHIVE_NAME="Miyar-Update-1.1.3-Complete.zip"
           ARCHIVE_PATH="$(find . -type f -name "$ARCHIVE_NAME" -not -path './.git/*' -print -quit)"
           if [ -z "$ARCHIVE_PATH" ] || [ ! -s "$ARCHIVE_PATH" ]; then
             echo "::error::Missing or empty source archive: $ARCHIVE_NAME"
@@ -54,10 +54,20 @@ jobs:
           test -f project/app/src/main/AndroidManifest.xml
           test -f project/gradle.properties
           grep -Fq 'applicationId = "com.miyar.app"' project/app/build.gradle.kts
-          grep -Fq 'versionCode = 33' project/app/build.gradle.kts
-          grep -Fq 'versionName = "1.1.2"' project/app/build.gradle.kts
+          grep -Fq 'versionCode = 34' project/app/build.gradle.kts
+          grep -Fq 'versionName = "1.1.3"' project/app/build.gradle.kts
           grep -Fq 'import androidx.compose.ui.draw.drawBehind' project/app/src/main/java/com/miyar/app/MainActivity.kt
-          grep -Fq 'version = 16' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
+          grep -Fq 'version = 17' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
+          grep -Fq 'CommerceHarvestDayEntity::class' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
+          grep -Fq 'observeCommercePartyRoleTotals' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
+          test -s project/tools/test_migration_16_17.py
+          grep -Fq 'MIGRATION_16_17' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
+          test -s project/app/src/main/java/com/miyar/app/CommerceScreens.kt
+          test -s project/app/src/main/java/com/miyar/app/data/CommerceModels.kt
+          test -s project/app/src/main/java/com/miyar/app/data/CommerceCalculations.kt
+          grep -Fq 'saveCommerceSale' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
+          grep -Fq 'addCommercePayment' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
+          grep -Fq 'commerce_payment_allocations' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
           grep -Fq 'MIGRATION_12_13' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
           grep -Fq 'MIGRATION_13_14' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
           grep -Fq 'MIGRATION_14_15' project/app/src/main/java/com/miyar/app/data/MiyarDatabase.kt
@@ -127,7 +137,14 @@ jobs:
           test -s project/app/src/main/res/drawable-nodpi/miyar_plant_branch.png
           test -s project/app/src/main/res/drawable/miyar_splash_background.xml
           test -s project/app/src/main/res/values-v31/styles.xml
-          echo "Miyar 1.1.2 package identity, Room version 16, stock issue ledger, strict unit conversion, manual sales totals, manual picker wages, inventory loading states, and dashboard/account summaries validated."
+          echo "Miyar 1.1.3 package identity, Room 16-to-17 additive commerce migration, party ledgers, multi-line sales, harvest-day costs and stock issue ledger source checks passed."
+
+      - name: Validate Room 16 to 17 migration SQL against representative 1.1.2 data
+        working-directory: project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/test_migration_16_17.py
 
       - name: Configure Gradle memory
         working-directory: project
@@ -236,7 +253,7 @@ jobs:
           test -x "$APKSIGNER"
           test -x "$AAPT"
           "$APKSIGNER" verify --verbose "$APK"
-          "$AAPT" dump badging "$APK" | grep -F "package: name='com.miyar.app' versionCode='33' versionName='1.1.2'"
+          "$AAPT" dump badging "$APK" | grep -F "package: name='com.miyar.app' versionCode='34' versionName='1.1.3'"
           KEY_CERT_SHA="$(keytool -list -v -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':')"
           APK_CERT_SHA="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')"
           test -n "$KEY_CERT_SHA"
@@ -248,13 +265,13 @@ jobs:
             exit 1
           fi
           mkdir -p release
-          cp "$APK" release/Miyar-1.1.2-Complete-Signed.apk
-          sha256sum release/Miyar-1.1.2-Complete-Signed.apk > release/SHA256SUMS.txt
+          cp "$APK" release/Miyar-1.1.3-Complete-Signed.apk
+          sha256sum release/Miyar-1.1.3-Complete-Signed.apk > release/SHA256SUMS.txt
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Miyar-1.1.2-Complete-Signed-APK
+          name: Miyar-1.1.3-Complete-Signed-APK
           path: project/release/*
           if-no-files-found: error
           retention-days: 30
